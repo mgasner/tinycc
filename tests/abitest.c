@@ -635,6 +635,150 @@ static int arg_align_test(void) {
   return run_callback(src, arg_align_test_callback);
 }
 
+/*
+ * Arguments passed on the stack after the registers run out. Apple's arm64
+ * ABI lays named arguments out there at their natural size and alignment
+ * (a float takes 4 bytes, a struct of three floats 12) where AAPCS64 gives
+ * each one at least an 8-byte slot; both sides of a call must agree. Each
+ * layout is checked both ways: the host compiler calling code compiled by
+ * libtcc, and that code calling a function compiled by the host compiler.
+ */
+
+typedef struct stack_float_test_type_s {float x, y, z;} stack_float_test_type;
+typedef float (*stack_float_test_function_type) (float, float, float, float, float, float, float,
+                                                 stack_float_test_type, float);
+
+static float stack_float_test_host(float a, float b, float c, float d, float e, float f, float g,
+                                   stack_float_test_type t, float m) {
+  return (a == 1 && b == 2 && c == 3 && d == 4 && e == 5 && f == 6 && g == 7 &&
+          t.x == 8 && t.y == 9 && t.z == 10) ? m : -1;
+}
+
+static int stack_float_test_callback(void *ptr) {
+  stack_float_test_function_type f = (stack_float_test_function_type)ptr;
+  stack_float_test_type t = {8, 9, 10};
+  return f(1, 2, 3, 4, 5, 6, 7, t, 0.5f) == 0.5f ? 0 : -1;
+}
+
+static int stack_float_test(void) {
+  const char *src =
+  "typedef struct stack_float_test_type_s {float x, y, z;} stack_float_test_type;\n"
+  "float f(float a, float b, float c, float d, float e, float f, float g,\n"
+  "        stack_float_test_type t, float m) {\n"
+  "  return (a == 1 && b == 2 && c == 3 && d == 4 && e == 5 && f == 6 && g == 7 &&\n"
+  "          t.x == 8 && t.y == 9 && t.z == 10) ? m : -1;\n"
+  "}\n";
+  return run_callback(src, stack_float_test_callback);
+}
+
+static int stack_float_call_test_callback(void *ptr) {
+  float (*f)(stack_float_test_function_type) = (float (*)(stack_float_test_function_type))ptr;
+  return f(stack_float_test_host) == 0.5f ? 0 : -1;
+}
+
+static int stack_float_call_test(void) {
+  const char *src =
+  "typedef struct stack_float_test_type_s {float x, y, z;} stack_float_test_type;\n"
+  "float f(float (*g)(float, float, float, float, float, float, float,\n"
+  "                   stack_float_test_type, float)) {\n"
+  "  stack_float_test_type t = {8, 9, 10};\n"
+  "  return g(1, 2, 3, 4, 5, 6, 7, t, 0.5f);\n"
+  "}\n";
+  return run_callback(src, stack_float_call_test_callback);
+}
+
+typedef int (*stack_int_test_function_type) (int, int, int, int, int, int, int, int,
+                                             char, short, int, char, long long);
+
+static int stack_int_test_host(int a, int b, int c, int d, int e, int f, int g, int h,
+                               char i, short j, int k, char l, long long m) {
+  return (a == 1 && b == 2 && c == 3 && d == 4 && e == 5 && f == 6 && g == 7 && h == 8 &&
+          i == 9 && j == 10 && k == 11 && l == 12) ? (int)m : -1;
+}
+
+static int stack_int_test_callback(void *ptr) {
+  stack_int_test_function_type f = (stack_int_test_function_type)ptr;
+  return f(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13) == 13 ? 0 : -1;
+}
+
+static int stack_int_test(void) {
+  const char *src =
+  "int f(int a, int b, int c, int d, int e, int f, int g, int h,\n"
+  "      char i, short j, int k, char l, long long m) {\n"
+  "  return (a == 1 && b == 2 && c == 3 && d == 4 && e == 5 && f == 6 && g == 7 && h == 8 &&\n"
+  "          i == 9 && j == 10 && k == 11 && l == 12) ? (int)m : -1;\n"
+  "}\n";
+  return run_callback(src, stack_int_test_callback);
+}
+
+static int stack_int_call_test_callback(void *ptr) {
+  int (*f)(stack_int_test_function_type) = (int (*)(stack_int_test_function_type))ptr;
+  return f(stack_int_test_host) == 13 ? 0 : -1;
+}
+
+static int stack_int_call_test(void) {
+  const char *src =
+  "int f(int (*g)(int, int, int, int, int, int, int, int,\n"
+  "               char, short, int, char, long long)) {\n"
+  "  return g(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13);\n"
+  "}\n";
+  return run_callback(src, stack_int_call_test_callback);
+}
+
+/* Variadic arguments start in an 8-byte slot even when the packed named
+   arguments before them end short of one. */
+
+typedef double (*stack_variadic_test_function_type) (int, int, int, int, int, int, int, int,
+                                                     char, ...);
+
+static double stack_variadic_test_host(int a, int b, int c, int d, int e, int f, int g, int h,
+                                       char i, ...) {
+  va_list ap;
+  double x;
+  long long y;
+  va_start(ap, i);
+  x = va_arg(ap, double);
+  y = va_arg(ap, long long);
+  va_end(ap);
+  return (a == 1 && b == 2 && c == 3 && d == 4 && e == 5 && f == 6 && g == 7 && h == 8 &&
+          i == 9 && y == 11) ? x : -1;
+}
+
+static int stack_variadic_test_callback(void *ptr) {
+  stack_variadic_test_function_type f = (stack_variadic_test_function_type)ptr;
+  return f(1, 2, 3, 4, 5, 6, 7, 8, 9, 10.5, 11LL) == 10.5 ? 0 : -1;
+}
+
+static int stack_variadic_test(void) {
+  const char *src =
+  "#include <stdarg.h>\n"
+  "double f(int a, int b, int c, int d, int e, int f, int g, int h, char i, ...) {\n"
+  "  va_list ap;\n"
+  "  double x;\n"
+  "  long long y;\n"
+  "  va_start(ap, i);\n"
+  "  x = va_arg(ap, double);\n"
+  "  y = va_arg(ap, long long);\n"
+  "  va_end(ap);\n"
+  "  return (a == 1 && b == 2 && c == 3 && d == 4 && e == 5 && f == 6 && g == 7 && h == 8 &&\n"
+  "          i == 9 && y == 11) ? x : -1;\n"
+  "}\n";
+  return run_callback(src, stack_variadic_test_callback);
+}
+
+static int stack_variadic_call_test_callback(void *ptr) {
+  double (*f)(stack_variadic_test_function_type) = (double (*)(stack_variadic_test_function_type))ptr;
+  return f(stack_variadic_test_host) == 10.5 ? 0 : -1;
+}
+
+static int stack_variadic_call_test(void) {
+  const char *src =
+  "double f(double (*g)(int, int, int, int, int, int, int, int, char, ...)) {\n"
+  "  return g(1, 2, 3, 4, 5, 6, 7, 8, 9, 10.5, 11LL);\n"
+  "}\n";
+  return run_callback(src, stack_variadic_call_test_callback);
+}
+
 #define RUN_TEST(t) \
   if (!testname || (strcmp(#t, testname) == 0)) { \
     fputs(#t "... ", stdout); \
@@ -687,5 +831,11 @@ int main(int argc, char **argv) {
   RUN_TEST(stdarg_many_test);
   RUN_TEST(stdarg_struct_test);
   RUN_TEST(arg_align_test);
+  RUN_TEST(stack_float_test);
+  RUN_TEST(stack_float_call_test);
+  RUN_TEST(stack_int_test);
+  RUN_TEST(stack_int_call_test);
+  RUN_TEST(stack_variadic_test);
+  RUN_TEST(stack_variadic_call_test);
   return retval;
 }
