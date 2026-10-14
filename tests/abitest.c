@@ -635,6 +635,128 @@ static int arg_align_test(void) {
   return run_callback(src, arg_align_test_callback);
 }
 
+/*
+ * va_arg after a variadic argument that did not fit in the registers left:
+ * it went on the stack, and so must every variadic argument after it, even
+ * one that would fit in the remaining registers (AAPCS64 va_arg). First a
+ * struct of four floats when three vector registers are left, then a struct
+ * of two long longs when one integer register is.
+ */
+
+typedef struct va_spill_hfa_type_s {float a, b, c, d;} va_spill_hfa_type;
+typedef double (*va_spill_hfa_function_type) (float, ...);
+
+static int va_spill_hfa_test_callback(void *ptr) {
+  va_spill_hfa_function_type f = (va_spill_hfa_function_type)ptr;
+  va_spill_hfa_type x = {1, 2, 3, 4}, y = {5, 6, 7, 8};
+  return f(0.0f, x, y, 0.5) == 0.5 ? 0 : -1;
+}
+
+static int va_spill_hfa_test(void) {
+  const char *src =
+  "#include <stdarg.h>\n"
+  "typedef struct va_spill_hfa_type_s {float a, b, c, d;} va_spill_hfa_type;\n"
+  "double f(float z, ...) {\n"
+  "  va_list ap;\n"
+  "  va_spill_hfa_type x, y;\n"
+  "  double w;\n"
+  "  va_start(ap, z);\n"
+  "  x = va_arg(ap, va_spill_hfa_type);\n"
+  "  y = va_arg(ap, va_spill_hfa_type);\n"
+  "  w = va_arg(ap, double);\n"
+  "  va_end(ap);\n"
+  "  return (x.a == 1 && x.d == 4 && y.a == 5 && y.d == 8) ? w : -1;\n"
+  "}\n";
+  return run_callback(src, va_spill_hfa_test_callback);
+}
+
+typedef struct va_spill_gr_type_s {long long a, b;} va_spill_gr_type;
+typedef long long (*va_spill_gr_function_type) (int, ...);
+
+static int va_spill_gr_test_callback(void *ptr) {
+  va_spill_gr_function_type f = (va_spill_gr_function_type)ptr;
+  va_spill_gr_type s = {7, 8};
+  return f(0, 1LL, 2LL, 3LL, 4LL, 5LL, 6LL, s, 9LL) == 9 ? 0 : -1;
+}
+
+static int va_spill_gr_test(void) {
+  const char *src =
+  "#include <stdarg.h>\n"
+  "typedef struct va_spill_gr_type_s {long long a, b;} va_spill_gr_type;\n"
+  "long long f(int z, ...) {\n"
+  "  va_list ap;\n"
+  "  long long sum = 0, w;\n"
+  "  va_spill_gr_type s;\n"
+  "  int i;\n"
+  "  va_start(ap, z);\n"
+  "  for (i = 0; i < 6; i++)\n"
+  "    sum += va_arg(ap, long long);\n"
+  "  s = va_arg(ap, va_spill_gr_type);\n"
+  "  w = va_arg(ap, long long);\n"
+  "  va_end(ap);\n"
+  "  return (sum == 21 && s.a == 7 && s.b == 8) ? w : -1;\n"
+  "}\n";
+  return run_callback(src, va_spill_gr_test_callback);
+}
+
+/*
+ * va_arg after a named argument that did not fit in the registers left:
+ * that used them up, so the variadic arguments start on the stack too.
+ */
+
+typedef struct va_named_hfa_type_s {float a, b;} va_named_hfa_type;
+typedef double (*va_named_hfa_function_type) (float, float, float, float, float, float, float,
+                                              va_named_hfa_type, ...);
+
+static int va_named_hfa_test_callback(void *ptr) {
+  va_named_hfa_function_type f = (va_named_hfa_function_type)ptr;
+  va_named_hfa_type t = {8, 9};
+  return f(1, 2, 3, 4, 5, 6, 7, t, 0.5) == 0.5 ? 0 : -1;
+}
+
+static int va_named_hfa_test(void) {
+  const char *src =
+  "#include <stdarg.h>\n"
+  "typedef struct va_named_hfa_type_s {float a, b;} va_named_hfa_type;\n"
+  "double f(float a, float b, float c, float d, float e, float f, float g,\n"
+  "         va_named_hfa_type t, ...) {\n"
+  "  va_list ap;\n"
+  "  double w;\n"
+  "  va_start(ap, t);\n"
+  "  w = va_arg(ap, double);\n"
+  "  va_end(ap);\n"
+  "  return (a == 1 && g == 7 && t.a == 8 && t.b == 9) ? w : -1;\n"
+  "}\n";
+  return run_callback(src, va_named_hfa_test_callback);
+}
+
+typedef struct va_named_gr_type_s {long long a, b;} va_named_gr_type;
+typedef long long (*va_named_gr_function_type) (long long, long long, long long, long long,
+                                                long long, long long, long long,
+                                                va_named_gr_type, ...);
+
+static int va_named_gr_test_callback(void *ptr) {
+  va_named_gr_function_type f = (va_named_gr_function_type)ptr;
+  va_named_gr_type t = {8, 9};
+  return f(1, 2, 3, 4, 5, 6, 7, t, 10LL) == 10 ? 0 : -1;
+}
+
+static int va_named_gr_test(void) {
+  const char *src =
+  "#include <stdarg.h>\n"
+  "typedef struct va_named_gr_type_s {long long a, b;} va_named_gr_type;\n"
+  "long long f(long long a, long long b, long long c, long long d, long long e,\n"
+  "            long long f, long long g, va_named_gr_type t, ...) {\n"
+  "  va_list ap;\n"
+  "  long long w;\n"
+  "  va_start(ap, t);\n"
+  "  w = va_arg(ap, long long);\n"
+  "  va_end(ap);\n"
+  "  return (a == 1 && g == 7 && t.a == 8 && t.b == 9) ? w : -1;\n"
+  "}\n";
+  return run_callback(src, va_named_gr_test_callback);
+}
+
 #define RUN_TEST(t) \
   if (!testname || (strcmp(#t, testname) == 0)) { \
     fputs(#t "... ", stdout); \
@@ -687,5 +809,9 @@ int main(int argc, char **argv) {
   RUN_TEST(stdarg_many_test);
   RUN_TEST(stdarg_struct_test);
   RUN_TEST(arg_align_test);
+  RUN_TEST(va_spill_hfa_test);
+  RUN_TEST(va_spill_gr_test);
+  RUN_TEST(va_named_hfa_test);
+  RUN_TEST(va_named_gr_test);
   return retval;
 }
